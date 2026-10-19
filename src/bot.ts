@@ -44,6 +44,19 @@ import {
 } from "./i18n.js";
 import { helpDetailMessage } from "./commands/help-detail.js";
 export { helpDetailMessage, COMMAND_DETAILS, type CommandDetail } from "./commands/help-detail.js";
+import {
+  handleBroadcastCallback,
+  registerBroadcastHandlers,
+  type BroadcastStore,
+} from "./commands/broadcast.js";
+export {
+  handleBroadcastCallback,
+  registerBroadcastHandlers,
+  handleBroadcastCommand,
+  getConfiguredBroadcastChats,
+  BroadcastStore,
+  sendBroadcast,
+} from "./commands/broadcast.js";
 
 /** Shared metadata for handlers, help, and Telegram's command menu. */
 export const COMMANDS = [
@@ -85,7 +98,7 @@ export const TELEGRAM_OPTIONS = {
 // Callback data is untrusted user input: it is validated before any action
 // runs, and operator actions are authorized exactly like /pause and /resume.
 
-export type CallbackActionType = "status" | "contracts" | "help" | "pause" | "resume";
+export type CallbackActionType = "status" | "contracts" | "help" | "pause" | "resume" | "broadcast";
 
 export interface ValidCallbackAction {
   type: CallbackActionType;
@@ -110,7 +123,7 @@ export const CALLBACK_UNAUTHORIZED_FEEDBACK = "Unauthorized: operator only";
 
 
 function isKnownAction(val: string): val is CallbackActionType {
-  return ["status", "contracts", "help", "pause", "resume"].includes(val);
+  return ["status", "contracts", "help", "pause", "resume", "broadcast"].includes(val);
 }
 
 /**
@@ -540,6 +553,8 @@ export interface BotDeps {
   botInfo?: UserFromGetMe;
   /** Bounded redacted log ring backing /export. Absent = command disabled. */
   logs?: LogCapture | undefined;
+  /** In-memory broadcast confirmation store. */
+  broadcastStore?: BroadcastStore | undefined;
 }
 
 /**
@@ -794,7 +809,7 @@ export async function handleCallbackQuery(
   const { action } = validation;
 
   // Enforce operator role authorization
-  if (action.type === "pause" || action.type === "resume") {
+  if (action.type === "pause" || action.type === "resume" || action.type === "broadcast") {
     if (!isOperator(ctx, config)) {
       console.warn(
         `[bot] ignored unauthorized callback /${action.type} on update ${ctx.update.update_id}`,
@@ -810,6 +825,11 @@ export async function handleCallbackQuery(
   // Execute validated action
   try {
     switch (action.type) {
+      case "broadcast": {
+        await handleBroadcastCallback(ctx, deps, action.raw);
+        break;
+      }
+
       case "status": {
         const text = statusMessage(config, status());
         if (ctx.callbackQuery?.message) {
@@ -902,6 +922,7 @@ export function createBot(deps: BotDeps): Bot {
   );
   registerCommandHandlers(bot, deps);
   registerCallbackHandlers(bot, deps);
+  registerBroadcastHandlers(bot, deps);
   const { config, status, logs } = deps;
 
   bot.command("export", async (ctx) => {
